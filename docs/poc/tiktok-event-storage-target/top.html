@@ -1,0 +1,74 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Target top waiting for storage handoff</title>
+<style>
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    background: #f7f9fc;
+    color: #15213b;
+    font: 20px/1.45 system-ui, sans-serif;
+  }
+  main { width: min(92vw, 42rem); padding: 28px; text-align: center; }
+  #proof { overflow-wrap: anywhere; white-space: pre-wrap; }
+</style>
+<main>
+  <h1 id="heading">Target-origin top page</h1>
+  <p id="proof">WAITING_FOR_CROSS_WEBVIEW_STORAGE_HANDOFF</p>
+</main>
+<script>
+(() => {
+  const params = new URLSearchParams(location.search);
+  const nonce = params.get('nonce') || 'missing';
+  const queryProof = params.get('proof') || '';
+  const storageKey = `cg_tiktok_event_${nonce}`;
+  const expected = `PoC_by_ContractGooner:${nonce}`;
+  const cookieName = `cg_tiktok_event_${nonce.replace(/[^a-z0-9]/gi, '')}`;
+  const proof = document.querySelector('#proof');
+  let finished = false;
+
+  function cookieValue() {
+    const prefix = `${cookieName}=`;
+    const entry = document.cookie.split('; ').find(value => value.startsWith(prefix));
+    return entry ? decodeURIComponent(entry.slice(prefix.length)) : '';
+  }
+
+  function poll() {
+    if (finished) return;
+    let storageValue = '';
+    try { storageValue = localStorage.getItem(storageKey) || ''; } catch (_) {}
+    const cookie = cookieValue();
+    const carrier = queryProof === expected
+      ? 'foreign-realm-query'
+      : storageValue === expected
+        ? 'localStorage'
+        : cookie === expected ? 'cookie' : '';
+    if (!carrier) return;
+
+    finished = true;
+    try { localStorage.removeItem(storageKey); } catch (_) {}
+    document.cookie = `${cookieName}=; Path=/; Max-Age=0; SameSite=None; Secure`;
+    document.querySelector('#heading').id = 'PoC_by_ContractGooner';
+    document.querySelector('#heading').textContent = 'PoC_by_ContractGooner';
+    proof.textContent = [
+      `origin=${location.origin}`,
+      `top=${window === top}`,
+      `carrier=${carrier}`,
+      `nonceMatched=${nonce !== 'missing'}`
+    ].join('\n');
+    document.title = `PoC_by_ContractGooner ${location.origin}`;
+    alert(location.origin);
+  }
+
+  setInterval(poll, 100);
+  setTimeout(() => {
+    if (!finished) {
+      proof.textContent = 'NO_TARGET_REALM_HANDOFF_AFTER_15000MS';
+      document.title = 'TARGET_TOP_CONTROL_CLEAN';
+    }
+  }, 15000);
+})();
+</script>
